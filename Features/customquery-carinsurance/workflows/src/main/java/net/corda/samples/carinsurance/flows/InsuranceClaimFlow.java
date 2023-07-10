@@ -1,0 +1,122 @@
+package net.corda.samples.carinsurance.flows;
+
+import co.paralleluniverse.fibers.Suspendable;
+import com.google.common.collect.ImmutableList;
+import net.corda.core.contracts.StateAndRef;
+import net.corda.core.flows.*;
+import net.corda.core.internal.FetchDataFlow;
+import net.corda.core.node.services.Vault;
+import net.corda.core.node.services.vault.Builder;
+import net.corda.core.node.services.vault.CriteriaExpression;
+import net.corda.core.node.services.vault.FieldInfo;
+import net.corda.core.node.services.vault.PageSpecification;
+import net.corda.core.node.services.vault.Sort;
+import net.corda.core.node.services.vault.QueryCriteria;
+import net.corda.core.transactions.SignedTransaction;
+import net.corda.core.transactions.TransactionBuilder;
+import net.corda.samples.carinsurance.contracts.InsuranceContract;
+import net.corda.samples.carinsurance.schema.InsuranceSchemaV1;
+import net.corda.samples.carinsurance.schema.PersistentInsurance;
+import net.corda.samples.carinsurance.states.Claim;
+import net.corda.samples.carinsurance.states.InsuranceState;
+
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Collections;
+
+public class InsuranceClaimFlow {
+
+    private InsuranceClaimFlow(){}
+
+    @InitiatingFlow
+    @StartableByRPC
+    public static class InsuranceClaimInitiator extends FlowLogic<SignedTransaction>{
+
+        private final ClaimInfo claimInfo;
+        private final String policyNumber;
+
+        public InsuranceClaimInitiator(ClaimInfo claimInfo, String policyNumber) {
+            this.claimInfo = claimInfo;
+            this.policyNumber = policyNumber;
+        }
+
+        @Override
+        @Suspendable
+        public SignedTransaction call() throws FlowException{
+            /*************************************************************************************
+             * This section is the custom query code. Instead of query out all the insurance state and filter by their policy number,
+             * custom query will only retrieve the insurance state that matched the policy number. The filtering will happen behind the scene.
+             * **/
+            Field valueField = null;
+            try{
+                valueField = PersistentInsurance.class.getDeclaredField("policyNumber");
+            } catch (NoSuchFieldException e) {
+                e.printStackTrace();
+            }
+            QueryCriteria insuranceQuery = new QueryCriteria.VaultCustomQueryCriteria(Builder.equal(valueField, policyNumber));
+            /** And you can have joint custom criteria as well. Simply add additional criteria and add it to the criteria object by using and().
+             *  QueryCriteria insuranceQuery = new QueryCriteria.VaultCustomQueryCriteria(Builder.equal(valueField, insuredValue));
+             * **/
+            QueryCriteria generalCriteria = new QueryCriteria.VaultQueryCriteria(Vault.StateStatus.UNCONSUMED).and(insuranceQuery);
+            Vault.Page<InsuranceState> insuranceStateAndRefs = getServiceHub().getVaultService().queryBy(InsuranceState.class, generalCriteria );
+            /***************************************************************************************/
+
+            if(insuranceStateAndRefs.getStates().isEmpty()){
+                throw new IllegalArgumentException("Policy not found");
+            }
+
+            StateAndRef<InsuranceState> inputStateAndRef = insuranceStateAndRefs.getStates().get(0);
+            Claim claim = new Claim(claimInfo.getClaimNumber(), claimInfo.getClaimDescription(),
+                    claimInfo.getClaimAmount());
+            InsuranceState input = inputStateAndRef.getState().getData();
+
+            List<Claim> claims = new ArrayList<>();
+            if(input.getClaims() == null || input.getClaims().size() == 0 ){
+                claims.add(claim);
+            }else {
+                claims.addAll(input.getClaims());
+                claims.add(claim);
+            }
+
+            //Create the output state
+            InsuranceState output = new InsuranceState(input.getPolicyNumber(), input.getInsuredValue(),
+                    input.getDuration(), input.getPremium(), input.getInsurer(), input.getInsuree(),
+                    input.getVehicleDetail(), claims);
+
+            // Build the transaction.
+            TransactionBuilder transactionBuilder = new TransactionBuilder(inputStateAndRef.getState().getNotary())
+                    .addInputState(inputStateAndRef)
+                    .addOutputState(output, InsuranceContract.ID)
+                    .addCommand(new InsuranceContract.Commands.AddClaim(), ImmutableList.of(getOurIdentity().getOwningKey()));
+
+            // Verify the transaction
+            transactionBuilder.verify(getServiceHub());
+
+            // Sign the transaction
+            SignedTransaction signedTransaction = getServiceHub().signInitialTransaction(transactionBuilder);
+
+            // Call finality Flow
+            FlowSession counterpartySession = initiateFlow(input.getInsuree());
+            return subFlow(new FinalityFlow(signedTransaction, ImmutableList.of(counterpartySession)));
+
+        }
+    }
+
+
+    @InitiatedBy(InsuranceClaimInitiator.class)
+    public static class InsuranceClaimResponder extends FlowLogic<SignedTransaction> {
+
+        private FlowSession counterpartySession;
+
+        public InsuranceClaimResponder(FlowSession counterpartySession) {
+            this.counterpartySession = counterpartySession;
+        }
+
+        @Override
+        @Suspendable
+        public SignedTransaction call() throws FlowException {
+            return subFlow(new ReceiveFinalityFlow(counterpartySession));
+        }
+    }
+}
