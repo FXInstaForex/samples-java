@@ -33,7 +33,7 @@ jobs:
       uses: gradle/gradle-build-action@v2
       with:
         arguments: build
-        gradle-executable: /samples-java/Basic/corda-app-example/
+        gradle-executable: ./Basic/corda-app-example/
     - name: Run build with Gradle Wrapper
-      run: .gradlew clean deployNodes 
+      run: ./gradlew clean deployNodes 
 
