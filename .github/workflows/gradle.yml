@@ -35,5 +35,5 @@ jobs:
         arguments: build
         build-root-directory: Basic/cordapp-example/
     - name: Run build with Gradle Wrapper
-      run: ./gradle clean deployNodes 
+      run: ./gradlew clean deployNodes 
 
