@@ -31,6 +31,9 @@ jobs:
 
     - name: Setup Gradle
       uses: gradle/gradle-build-action@v2
+      with:
+        arguments: build
+        gradle-executable: /samples-java/Basic/corda-app-example/
     - name: Run build with Gradle Wrapper
-      run: /home/runner/work/samples-java/Basic/corda-app-example/gradlew clean deployNodes 
+      run: .gradlew clean deployNodes 
 
