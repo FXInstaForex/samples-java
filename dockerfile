@@ -2,6 +2,6 @@
 FROM gradle:latest AS BUILD
 WORKDIR /samples-java/Basic/cordapp-example
 COPY . .
-RUN gradle init
+#RUN gradle init
 RUN ./gradlew clean deployNodes
 
