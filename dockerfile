@@ -1,5 +1,6 @@
 #FROM ubuntu:22.04
 FROM gradle:latest AS BUILD
+WORKDIR Basic/cordapp-example
 RUN gradle init
 RUN ./gradlew clean deployNodes
 
